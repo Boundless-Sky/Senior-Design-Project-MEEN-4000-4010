@@ -1,0 +1,105 @@
+#include <ros/ros.h>
+#include <image_transport/image_transport.h>
+#include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/image_encodings.h>
+#include <opencv2/opencv.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/highgui/highgui.hpp>
+
+using namespace cv;
+using namespace std;
+int MinHb=78,MaxHb=124,MinSb=60,MaxSb=255,MinVb=60,MaxVb=255;//blue
+int MinHo=10,MaxHo=30,MinSo=80,MaxSo=255,MinVo=80,MaxVo=255;//ora
+int erosion_size=2;
+static const std::string OPENCV_WINDOW = "Image window";
+
+int main(int argc, char** argv)
+{
+cout<< "q"<<endl;
+  ros::init(argc, argv, "image_reader");
+  ros::NodeHandle n;
+  ros::Rate loop_rate(30);
+  VideoCapture cap(0); 
+  double dWidth = cap.get(CV_CAP_PROP_FRAME_WIDTH); 
+  double dHeight = cap.get(CV_CAP_PROP_FRAME_HEIGHT);
+  while (ros::ok()){
+	int64 t1 = getTickCount();
+
+	bool ifthing_b = true, ifthing_o = true;
+	Mat img,img_HSV,img_blu,img_blu2,img_ora,img_ora2;
+	double largest_area=0;int largest_contour_index=0;
+	vector<vector<Point> > contours_b,contours_o;
+  	vector<Vec4i> hierarchy_b,hierarchy_o;
+	bool bSuccess = cap.read(img);
+ 	if (!bSuccess) break;
+///////////////////////////////////////////////////////////////////
+	cvtColor( img, img_HSV, CV_BGR2HSV );
+	inRange(img_HSV, Scalar(MinHb,MinSb,MinVb),Scalar(MaxHb+1,MaxSb+1,MaxVb+1),img_blu);
+
+	Mat element = getStructuringElement( MORPH_RECT,
+                                       Size( 2*erosion_size + 1, 2*erosion_size+1 ),
+                                       Point( erosion_size, erosion_size ) );
+	erode( img_blu, img_blu2, element);
+	dilate(img_blu2, img_blu, element);
+	findContours(img_blu, contours_b, hierarchy_b, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE);
+	for (int i = 0; i < contours_b.size(); i++) {
+			double a = contourArea(contours_b[i], false);
+			if (a > largest_area){
+				largest_area = a;
+				largest_contour_index = i;
+			}
+		}
+		RotatedRect minEllipse;
+		if (contours_b.size() == 0)
+			ifthing_b = false;
+		if (ifthing_b)
+		{
+			if (contours_b[largest_contour_index].size() <= 5)
+				ifthing_b = false;
+			if (ifthing_b)
+			{
+				minEllipse = fitEllipse(Mat(contours_b[largest_contour_index]));
+				circle(img, minEllipse.center, 5, CV_RGB(0, 0, 255), 2, 8);
+			}
+		}
+
+
+///////////////////orange
+	largest_area=0;largest_contour_index=0;
+	inRange(img_HSV, Scalar(MinHo,MinSo,MinVo),Scalar(MaxHo+1,MaxSo+1,MaxVo+1),img_ora);
+	erode( img_ora, img_ora2, element);
+	dilate(img_ora2, img_ora, element);
+	findContours(img_ora, contours_o, hierarchy_o, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE);
+		for (int i = 0; i < contours_o.size(); i++) {
+			double a = contourArea(contours_o[i], false);
+			if (a > largest_area){
+				largest_area = a;
+				largest_contour_index = i;
+			}
+		}
+		if (contours_o.size() == 0)
+			ifthing_o = false;
+		if (ifthing_o)
+		{
+			if (contours_o[largest_contour_index].size() <= 5)
+				ifthing_o = false;
+			if (ifthing_o)
+			{
+				minEllipse = fitEllipse(Mat(contours_o[largest_contour_index]));
+				circle(img, minEllipse.center, 5, CV_RGB(255, 0, 0), 2, 8);
+			}
+		}
+//////////////////////////////////////////////////////////////////
+imshow("raw", img);  	
+//imshow("blue", img_blu); 
+	//imshow("orange", img_ora); 
+	
+    	waitKey(1);  
+   	ros::spinOnce();
+    	loop_rate.sleep();
+int64 t2 = getTickCount();
+		double T = (t2 - t1) / getTickFrequency();
+		cout << T <<"s"<< endl;
+  }
+  return 0;
+}

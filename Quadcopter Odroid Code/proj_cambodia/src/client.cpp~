@@ -1,0 +1,162 @@
+#include <ros/ros.h>
+#include <stdio.h>
+#include <dji_sdk/dji_drone.h>
+#include <cstdlib>
+#include <stdlib.h>
+#include <actionlib/client/simple_action_client.h>
+#include <actionlib/client/terminal_state.h>
+#include "std_msgs/String.h"
+#include <geometry_msgs/Vector3.h>
+#include <geometry_msgs/Quaternion.h>
+
+using namespace DJI::onboardSDK;
+float ft = 5; //[ft]
+float des_height = ft/3.28; //[meters]
+float roll_from_PID;
+float pitch_from_PID;
+float thrust_from_PID;
+float yaw_from_PID;
+float T_lost = 0;
+	
+static void Display_Main_Menu(void)
+{
+    printf("\r\n");
+    printf("+-------------------------- < Main menu > ------------------------+\n");
+	printf("| [1]  SDK Version Query        | [2]  Request Control             |\n");
+	printf("| [3]  Release Control          | [4]  Takeoff                     |\n");	
+	printf("| [5]  Landing                  | [6]  Go Home                     |\n");	
+	printf("| [7]  *PID CaMbOdIa Control*   |                                  |\n");	
+    printf("+-----------------------------------------------------------------+\n");
+    printf("input 1/2/3 etc..then press enter key\r\n");
+    printf("use `rostopic echo` to query drone status\r\n");
+    printf("----------------------------------------\r\n");
+}
+
+void flight_PID_callback(const geometry_msgs::Quaternion& Q)
+{
+  //ROS_INFO("Recieved: [%s]", v->data.c_str());
+  roll_from_PID = Q.y;
+  pitch_from_PID = Q.x;
+  thrust_from_PID = Q.z;
+  yaw_from_PID = Q.w;
+}
+
+void lost_callback(const geometry_msgs::Vector3& tl){
+	T_lost = tl.x;
+}
+   
+int main(int argc, char *argv[])
+{
+    int main_operate_code = 0;
+    int temp32;
+    int circleRadius;
+    int circleHeight;
+    float Phi, circleRadiusIncrements;
+    int x_center, y_center, yaw_local;
+    bool valid_flag = false;
+    bool err_flag = false;
+    ros::init(argc, argv, "sdk_client"); //intialize ROS and specify the name of our node
+    ROS_INFO("sdk_service_client_test");
+    ros::NodeHandle nh;
+    DJIDrone* drone = new DJIDrone(nh);
+    //Subscriptions
+    ros::Subscriber sub1 = nh.subscribe("/cmd_att", 1 , flight_PID_callback);
+    ros::Subscriber sub2 = nh.subscribe("/time_lost_centroid",1, lost_callback);
+
+    uint8_t userData = 0;
+    ros::spinOnce();
+    
+    Display_Main_Menu();
+    while(1)
+    {
+        ros::spinOnce();
+        std::cout << "Enter Input Val: ";
+        while(!(std::cin >> temp32)){
+        std::cin.clear();
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::cout << "Invalid input.  Try again: ";
+	}
+
+        if(temp32>0 && temp32<38)
+        {
+            main_operate_code = temp32;         
+        }
+        else
+        {
+            printf("ERROR - Out of range Input \n");
+            Display_Main_Menu();
+            continue;
+        }
+        switch(main_operate_code)
+        {
+	    case 1:
+		/* SDK version query*/
+		drone->check_version();
+		break;
+            case 2:
+                /* request control ability*/
+                drone->request_sdk_permission_control();
+                break;
+            case 3:
+                /* release control ability*/
+                drone->release_sdk_permission_control();
+                break;
+            case 4:
+                /* take off */
+		/*https://developer.dji.com/mobile-sdk/documentation/introduction/component-guideflightController.html */
+		// hovering at 1.2 meters (4feet) above ground
+                drone->takeoff();
+                break;
+            case 5:
+                /* landing*/
+                drone->landing();
+                break;
+            case 6:
+                /* go home*/
+                drone->gohome();
+                break;
+ 	    	case 7:
+                /*PID Cambodia Control*/
+				//definition of values in attitude_control:
+				//attitude_control(self, flag, x, y, z, yaw)
+				/*flag roll pitch throttle, yaw.
+				flag = 0x1B
+				roll/pitch (Hori_Atti_Tilt_Ang) = -30 to 30 degree
+				thrust (Vert_Pos) = 0 m to  m
+				yaw (yaw_rate) = -100 to 100 degree/sec
+
+				(legacy) attitude control flag is 0x00100001 (0x21) this is saying flight control 13, ground reference, stable flight 
+				*/
+			//	printf("Tracking Target\r\n");
+					while(ros::ok()){
+						if(T_lost < 500){ //tim in sec
+							/*Flag 0x21 was control mode 13 (use with precaution) --> see dji site appendix
+							  Flag 0x0B is control mode 2 (Dejun proven)*/
+                                                        printf("Tracking Target \r\n"); 
+							//drone->attitude_control(0x21, roll_from_PID, pitch_from_PID, 31.2, yaw_from_PID); //uncomment for original
+				
+							/*0b0000 1011 = 0x0B
+				 			  Bit 0 @ 1 = stable flight
+				  			  Bit 1 @ 1 = Body frame
+							*/
+                					drone->attitude_control(0x1B, roll_from_PID, pitch_from_PID, des_height ,yaw_from_PID);   
+							usleep(20000); //50hz, recommnded momvement control commands
+						}
+						else{
+							drone->attitude_control(0x1B, 0, 0, des_height ,yaw_from_PID);   
+							printf("I lost the target\r\n");
+							//drone->attitude_control(0x21, 0, 0, 31.2, 0);
+							//drone->release_sdk_permission_control();
+						}
+						ros::spinOnce();//enter a loop. exit when ctrl-c is pressed or node is shutdown by master
+					}		
+				break;
+        }//end switch
+        ros::spinOnce();
+        main_operate_code = -1;
+        Display_Main_Menu();
+
+    }//end while
+    return 0;
+} //end main
+

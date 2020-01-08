@@ -1,0 +1,4 @@
+<launch>
+	<node pkg="proj_cambodia" type="proj_node" name="proj_node" output="screen">
+	</node>
+</launch>
